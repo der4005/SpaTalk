@@ -201,6 +201,17 @@
     st_obj <- Seurat::CreateSeuratObject(st_data)
     st_obj[['x']] <- st_meta$x
     st_obj[['y']] <- st_meta$y
+    # The following lines convert Seurat v5 assay to v3 so that it works with sceasy. Necessary if user has Seurat v5 installed
+    if (packageVersion("Seurat") >= "5"){
+        sc_obj[["RNA3"]] <- as(object = sc_obj[["RNA"]], Class = "Assay")
+        DefaultAssay(sc_obj) <- "RNA3"
+        sc_obj[["RNA"]] <- NULL
+        sc_obj <- RenameAssays(object = sc_obj, RNA3 = "RNA")
+        st_obj[["RNA3"]] <- as(object = st_obj[["RNA"]], Class = "Assay")
+        DefaultAssay(st_obj) <- "RNA3"
+        st_obj[["RNA"]] <- NULL
+        st_obj <- RenameAssays(object = st_obj, RNA3 = "RNA")
+    }
     if (!dir.exists("cell2location")) {
         dir.create("cell2location")
     }
@@ -286,7 +297,12 @@
 .normalize_data <- function(rawdata) {
     rawdata <- Seurat::CreateSeuratObject(rawdata)
     rawdata <- Seurat::NormalizeData(rawdata, verbose = F)
-    rawdata <- rawdata[["RNA"]]@data
+    #The following lines make the function compatible with Seurat V5
+    if (packageVersion("Seurat") >= "5"){
+        rawdata <- rawdata[["RNA"]]$data
+    } else {
+        rawdata <- rawdata[["RNA"]]@data
+    }
     return(rawdata)
 }
 
