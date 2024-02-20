@@ -949,3 +949,152 @@ get_lr_path <- function(object, celltype_sender, celltype_receiver, ligand, rece
     }
     return(list(tf_path = tf_path_all, path_pvalue = rec_pathway_res))
 }
+
+
+#' @title Do DiffExp between two SpaTalk objects
+#'
+#' @description Differential expression between two SpaTalk objects on which dec_cci() has been run for the given sender/receiver pair.
+#' @param object1 SpaTalk object generated from \code{\link{dec_cci}}.
+#' @param object2 SpaTalk object generated from \code{\link{dec_cci}}.
+#' @param celltype_sender Name of celltype_sender.
+#' @param celltype_receiver Name of celltype_receiver.
+#' @param min_LR_ratio Minimum coexpression ratio of ligand/receptor pair (default is 0.10)
+#' @param return_Seurat If set to true, will return a list where [[1]] is the result dataframe and [[2]] is the seurat object with module scores (for plotting)
+#' @return A dataframe with pval and padj (FDR) for all pathways derived from a Wilcox test of module scores generated in Seurat for pathway genes, within receiver cells
+#' @import methods
+#' @importFrom stats p.adjust
+#' @export
+
+DiffExp <- function(Object1, Object2, celltype_sender, celltype_receiver, min_LR_ratio = 0.10, return_Seurat=FALSE){
+  #Get results of dec_cci()
+  Group1Data <- Object1@lrpair
+  
+  #Filter by sender & receiver pair
+  Group1Data <- Group1Data[Group1Data$celltype_sender == celltype_sender & Group1Data$celltype_receiver == celltype_receiver,]
+  
+  #Remove LR pairs with low coexpression ratios
+  Group1Data <- Group1Data[Group1Data$lr_co_ratio >= min_LR_ratio,]
+  
+  #Repeat for object 2
+  Group2Data <- Object2@lrpair
+  Group2Data <- Group2Data[Group2Data$celltype_sender == celltype_sender & Group2Data$celltype_receiver == celltype_receiver,]
+  Group2Data <- Group2Data[Group2Data$lr_co_ratio >= min_LR_ratio,]
+
+  #Get all the unique LR pairs between the two datasets and remember the origin so we know which object to run get_lr_path() on, in case pair is object-specific
+  Group1_LR <- paste(Group1Data$ligand, Group1Data$receptor, sep="_")
+  names(Group1_LR) <- rep("Group1", length(Group1_LR))
+  Group2_LR <- paste(Group2Data$ligand, Group2Data$receptor, sep="_")
+  names(Group2_LR) <- rep("Group2", length(Group2_LR))
+  unique_LR <- c(Group1_LR, Group2_LR)
+  unique_LR <- unique_LR[!duplicated(unique_LR)]
+  
+  #Empty vectors for ligand, receptor, pathway and gene names
+  pathways <- c()
+  genes <- c()
+  pathway_count <- c()
+  ligands <- c()
+  receptors <- c()
+  
+  #Get all the downstream pathways enriched for each LR pair
+  for (i in 1:length(unique_LR)){
+    lr <- strsplit(unique_LR[i], "_")
+    ligand <- lr[[1]][1]
+    receptor <- lr[[1]][2]
+    ligands <- c(ligands, ligand)
+    receptors <- c(receptors, receptor)
+    
+    if (names(unique_LR)[i] == "Group1"){
+      lr_pathways <- get_lr_path(object = Object1,
+                           celltype_sender = celltype_sender,
+                           celltype_receiver = celltype_receiver,
+                           ligand = ligand,
+                           receptor = receptor)
+    } else {
+      lr_pathways <- get_lr_path(object = Object2,
+                           celltype_sender = celltype_sender,
+                           celltype_receiver = celltype_receiver,
+                           ligand = ligand,
+                           receptor = receptor)
+    }
+    pathway <- lr_pathways$path_pvalue$receptor_pathways
+    pathways <- c(pathways, pathway)
+    pathway_count <- c(pathway_count, length(pathway)) #Keep track of # of pathways per LR pair
+    genes <- c(genes, lr_pathways$path_pvalue$gene)
+  }
+  
+  #Get counts and metadata for receiver cells 
+  Rec_Cells_Group1 <- Object1@cellpair[[paste(celltype_sender, celltype_receiver, sep=" -- ")]]$cell_receiver 
+  Counts_Group1 <- Object1@data$newdata
+  Counts_Group1 <- Counts_Group1[,colnames(Counts_Group1) %in% Rec_Cells_Group1]
+  Meta_Group1 <- Object1@meta$newmeta[Object1@meta$newmeta$cell %in% Rec_Cells_Group1,]
+  Meta_Group1$Group <- "Group1"
+
+  Rec_Cells_Group2 <- Object2@cellpair[[paste(celltype_sender, celltype_receiver, sep=" -- ")]]$cell_receiver 
+  Counts_Group2 <- Object2@data$newdata
+  Counts_Group2 <- Counts_Group2[,colnames(Counts_Group2) %in% Rec_Cells_Group2]
+  Meta_Group2 <- Object2@meta$newmeta[Object2@meta$newmeta$cell %in% colnames(Counts_Group2),]
+  Meta_Group2$Group <- "Group2"
+  
+  #Make sure col and rownames are distinct
+  colnames(Counts_Group2) <- paste(colnames(Counts_Group2), "2", sep="_")
+  Meta_Group2$cell <- paste(Meta_Group2$cell, "2", sep="_")
+  
+  #Make rownames cell names to match count matrix
+  rownames(Meta_Group1) <- Meta_Group1$cell
+  rownames(Meta_Group2) <- Meta_Group2$cell
+  
+  #Remove any genes that are unique to one group
+  Counts_Group1 <- Counts_Group1[rownames(Counts_Group1) %in% rownames(Counts_Group2),]
+  Counts_Group2 <- Counts_Group2[rownames(Counts_Group2) %in% rownames(Counts_Group1),]
+  
+  #Remove any genes from gene list that may have been removed now
+  genes <- strsplit(genes, ",")
+  for (i in 1:length(genes)){
+    gene_vec <- genes[[i]]
+    gene_vec <- gene_vec[gene_vec %in% row.names(Counts_Group1)]
+    genes[[i]] <- gene_vec
+  }
+  
+  SeuratCounts <- cbind(Counts_Group1, Counts_Group2)
+  SeuratMeta <- rbind(Meta_Group1, Meta_Group2)
+
+  #Create Seurat
+  Seurat_Obj <- Seurat::CreateSeuratObject(counts = SeuratCounts, meta.data = SeuratMeta)
+  
+  #Add module score
+  Seurat_Obj <- AddModuleScore(Seurat_Obj, features=genes, name="PW_Module#", slot="counts")
+  
+  #Get metadata which holds the module scores
+  SeuratMeta <- Seurat_Obj@meta.data
+  
+  #Run wilcox test for each pathway
+  rep_num <- length(pathways) #storing in variable since we will use again
+  pvals <- c()
+  for (i in 1:rep_num){
+    SigTest <- wilcox.test(x = SeuratMeta[SeuratMeta$Group == "Group1",][[paste("PW_Module#", i, sep="")]], y = SeuratMeta[SeuratMeta$Group == "Group2",][[paste("PW_Module#", i, sep="")]])
+    pvals <- c(pvals, SigTest$p.value)
+  }
+  
+  #adjust pvalues
+  pval.adj = stats::p.adjust(
+      p = pvals,
+      method = "fdr",
+      n = rep_num
+  )
+
+  Result_df <- data.frame(celltype_sender=rep(celltype_sender, rep_num),
+                        celltype_receiver=rep(celltype_receiver, rep_num),
+                        Group1=rep(deparse(substitute(Object1)), rep_num),
+                        Group2=rep(deparse(substitute(Object2)), rep_num),
+                        ligand=rep(ligands, pathway_count),
+                        receptor=rep(receptors, pathway_count),
+                        pathway=pathways,
+                        pval=pvals,
+                        padj=pval.adj,
+                        ModuleNum=c(1:rep_num))
+  if (return_Seurat == TRUE){
+      return(list(Seurat=Seurat_Obj, Results=Result_df))
+  } else {
+      return(Result_df)
+  } 
+}
