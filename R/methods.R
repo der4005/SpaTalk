@@ -578,13 +578,14 @@ find_lr_path <- function(object, lrpairs, pathways, max_hop = NULL, if_doParalle
 #' @param co_exp_ratio Min cell ratio in receiving cells with co-expressed source and target genes for predicting the downstream pathway activity.
 #' @param if_doParallel Use doParallel. Default is TRUE.
 #' @param use_n_cores Number of CPU cores to use. Default is all cores - 2.
+#' @param ReplicateMode If set to true, will look for Replicate column of newmetadata and use it to filter cellpairs
 #' @return SpaTalk object containing the inferred LR pairs and pathways.
 #' @import Matrix progress methods
 #' @importFrom crayon cyan green
 #' @export
 
 dec_cci <- function(object, celltype_sender, celltype_receiver, n_neighbor = 10, min_pairs = 5,
-    min_pairs_ratio = 0, per_num = 1000, pvalue = 0.05, co_exp_ratio = 0.1, if_doParallel = T, use_n_cores = NULL) {
+    min_pairs_ratio = 0, per_num = 1000, pvalue = 0.05, co_exp_ratio = 0.1, if_doParallel = T, use_n_cores = NULL, ReplicateMode = FALSE) {
     # check input data
     if (!is(object, "SpaTalk")) {
         stop("Invalid class for object: must be 'SpaTalk'!")
@@ -611,7 +612,7 @@ dec_cci <- function(object, celltype_sender, celltype_receiver, n_neighbor = 10,
     if (!celltype_receiver %in% st_meta$celltype) {
         stop("Please provide a correct celltype_receiver")
     }
-    cell_pair <- .get_cellpair(celltype_dist, st_meta, celltype_sender, celltype_receiver, n_neighbor)
+    cell_pair <- .get_cellpair(celltype_dist, st_meta, celltype_sender, celltype_receiver, n_neighbor, ReplicateMode)
     cell_sender <- st_meta[st_meta$celltype == celltype_sender, ]
     cell_receiver <- st_meta[st_meta$celltype == celltype_receiver, ]
     cell_pair_all <- nrow(cell_sender) * nrow(cell_receiver)/2
