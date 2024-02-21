@@ -769,7 +769,7 @@
     return(st_data)
 }
 
-.get_cellpair <- function(celltype_dist, st_meta, celltype_sender, celltype_receiver, n_neighbor) {
+.get_cellpair <- function(celltype_dist, st_meta, celltype_sender, celltype_receiver, n_neighbor, ReplicateMode) {
     cell_sender <- st_meta[st_meta$celltype == celltype_sender, ]
     cell_receiver <- st_meta[st_meta$celltype == celltype_receiver, ]
     cell_pair <- list()
@@ -784,6 +784,21 @@
     cell_pair <- reshape2::melt(cell_pair, measure.vars = colnames(cell_pair), variable.name = "cell_sender", value.name = "cell_receiver")
     cell_pair$cell_sender <- as.character(cell_pair$cell_sender)
     cell_pair <- cell_pair[cell_pair$cell_receiver %in% cell_receiver$cell, ]
+    if (ReplicateMode == TRUE){
+        boolVec <- c()
+        for (i in 1:nrow(cell_pair)) {
+            SenderCell <- cell_pair$cell_sender[i]
+            ReceiverCell <- cell_pair$cell_receiver[i]
+            SenderRep <- st_meta[st_meta$cell == SenderCell,]$Replicate
+            ReceiverRep <- st_meta[st_meta$cell == ReceiverCell,]$Replicate
+        if (SenderRep == ReceiverRep) {
+            boolVec <- c(boolVec, TRUE)
+            } else {
+            boolVec <- c(boolVec, FALSE)
+            }            
+        }
+        cell_pair <- cell_pair[boolVec, ]
+    }   
     return(cell_pair)
 }
 
